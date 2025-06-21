@@ -2908,8 +2908,8 @@ impl Visitor {
             }
         } else if let Expr::Unary(unary) = expr {
             let span = unary.span();
-            match (is_inside_ghost, mode_block, &*unary.expr) {
-                (false, (false, _), Expr::Block(..)) => {
+            match (mode_block, &*unary.expr) {
+                ((false, _), Expr::Block(..)) => {
                     // proof { ... }
                     let mut inner = take_expr(&mut *unary.expr);
                     if self.inside_const {
@@ -2917,12 +2917,12 @@ impl Visitor {
                             quote_spanned!(span => {#[verus::internal(const_header_wrapper)] ||/* vattr */{#inner};}),
                         );
                     }
-                    *expr = self.maybe_erase_expr(
-                        span,
-                        Expr::Verbatim(
-                            quote_spanned!(span => #[verifier::proof_block] /* vattr */ #inner),
-                        ),
-                    );
+                    let e = if is_inside_ghost {
+                        quote_spanned!(span => #[verifier::proof_in_spec] /* vattr */ #inner)
+                    } else {
+                        quote_spanned!(span => #[verifier::proof_block] /* vattr */ #inner)
+                    };
+                    *expr = self.maybe_erase_expr(span, Expr::Verbatim(e));
                 }
                 _ => {
                     *expr = Expr::Verbatim(
@@ -3163,7 +3163,9 @@ impl Visitor {
         // into:
         //  {
         //      #[allow(non_snake_case)]
-        //      let VERUS_loop_result = match ::core::iter::IntoIterator::into_iter(e) {
+        //      let VERUS_iter = e;
+        //      #[allow(non_snake_case)]
+        //      let VERUS_loop_result = match ::core::iter::IntoIterator::into_iter(VERUS_iter) {
         //          #[allow(non_snake_case)]
         //          mut VERUS_exec_iter => {
         //              #[allow(non_snake_case)]
@@ -3176,7 +3178,10 @@ impl Visitor {
         //                      ::vstd::pervasive::ForLoopGhostIterator::ghost_invariant(&y,
         //                          builtin::infer_spec_for_loop_iter(
         //                              &::vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
-        //                                  &::core::iter::IntoIterator::into_iter(e)))),
+        //                                  &::core::iter::IntoIterator::into_iter(VERUS_iter)),
+        //                              &::vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
+        //                                  &::core::iter::IntoIterator::into_iter(e)),
+        //                          )),
         //                      { let x =
         //                          ::vstd::pervasive::ForLoopGhostIterator::ghost_peek_next(&y)
         //                          .unwrap_or(vstd::pervasive::arbitrary());
@@ -3286,7 +3291,10 @@ impl Visitor {
         //              ::vstd::pervasive::ForLoopGhostIterator::ghost_invariant(&y,
         //                  builtin::infer_spec_for_loop_iter(
         //                      &::vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
-        //                          &::core::iter::IntoIterator::into_iter(e)))),
+        //                          &::core::iter::IntoIterator::into_iter(VERUS_iter)),
+        //                      &::vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
+        //                          &::core::iter::IntoIterator::into_iter(e)),
+        //                  )),
         let exec_inv: Expr = Expr::Verbatim(quote_spanned_vstd!(vstd, expr.span() =>
             #[verifier::custom_err(#exec_inv_msg)]
             #vstd::pervasive::ForLoopGhostIterator::exec_invariant(&#x_ghost_iter, &#x_exec_iter)
@@ -3295,6 +3303,8 @@ impl Visitor {
             #[verifier::custom_err(#ghost_inv_msg)]
             #vstd::pervasive::ForLoopGhostIterator::ghost_invariant(&#x_ghost_iter,
                 builtin::infer_spec_for_loop_iter(
+                    &#vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
+                        &::core::iter::IntoIterator::into_iter(VERUS_iter)),
                     &#vstd::pervasive::ForLoopGhostIteratorNew::ghost_iter(
                         &::core::iter::IntoIterator::into_iter(#expr_inv)),
                     #print_hint,
@@ -3398,7 +3408,9 @@ impl Visitor {
         };
         Expr::Verbatim(quote_spanned!(span => {
             #[allow(non_snake_case)]
-            let VERUS_loop_result = match ::core::iter::IntoIterator::into_iter(#expr) {
+            let VERUS_iter = #expr;
+            #[allow(non_snake_case)]
+            let VERUS_loop_result = match ::core::iter::IntoIterator::into_iter(VERUS_iter) {
                 #[allow(non_snake_case)]
                 mut #x_exec_iter => #full_loop
             };
